@@ -33,6 +33,9 @@
         "projectId": "7888ebca-531c-4105-8908-1b3963e84609"
       }
     },
-    "owner": "npthien-me"
+    "owner": "npthien-me",
+    "plugins": [
+      "expo-sqlite"
+    ]
   }
 }

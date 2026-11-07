@@ -2,19 +2,36 @@ import React, { useEffect, useState } from 'react';
 import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { gpsService } from './src/services/gps/GPSService';
+import { mapMatcher } from './src/services/osm/MapMatcher';
 import { GPSFix, GPSStatus } from './src/types/gps';
+import { RoadMatchResult } from './src/types/osm';
 import { GPSStatusBar } from './src/ui/components/GPSStatusBar';
+import { RoadMatchCard } from './src/ui/components/RoadMatchCard';
 import { SpeedGauge } from './src/ui/components/SpeedGauge';
 import { TelemetryInfo } from './src/ui/components/TelemetryInfo';
 
 export default function App() {
   const [fix, setFix] = useState<GPSFix | null>(null);
   const [status, setStatus] = useState<GPSStatus>('idle');
+  const [roadMatch, setRoadMatch] = useState<RoadMatchResult | null>(null);
 
   useEffect(() => {
+    // Warm up the offline SQLite OSM database
+    mapMatcher.initialize().catch((err) => {
+      console.warn('Failed to pre-warm OSM database:', err);
+    });
+
     // Subscribe to GPS telemetry fixes
-    const unsubscribeFix = gpsService.subscribe((newFix) => {
+    const unsubscribeFix = gpsService.subscribe(async (newFix) => {
       setFix(newFix);
+
+      // Perform local offline map matching against SQLite road database
+      try {
+        const matchResult = await mapMatcher.match(newFix);
+        setRoadMatch(matchResult);
+      } catch (err) {
+        console.warn('Map matching error:', err);
+      }
     });
 
     // Subscribe to GPS hardware/service status
@@ -39,6 +56,7 @@ export default function App() {
 
   const handleStop = () => {
     gpsService.stopTracking();
+    setRoadMatch(null);
   };
 
   return (
@@ -51,6 +69,10 @@ export default function App() {
         </View>
 
         <SpeedGauge speedKmh={fix ? fix.speedKmh : 0} />
+
+        <View style={styles.cardContainer}>
+          <RoadMatchCard match={roadMatch} />
+        </View>
 
         <GPSStatusBar
           status={status}
@@ -101,6 +123,10 @@ const styles = StyleSheet.create({
     color: '#8B949E',
     letterSpacing: 2,
     marginTop: 2,
+  },
+  cardContainer: {
+    width: '100%',
+    paddingHorizontal: 20,
   },
   footer: {
     paddingHorizontal: 24,
