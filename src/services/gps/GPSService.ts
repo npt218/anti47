@@ -24,6 +24,13 @@ export class GPSService {
   private simulator: GPSSimulator;
   private locationSubscription: Location.LocationSubscription | null = null;
 
+  /**
+   * Monotonic session generation token.
+   * Incremented on every session transition (startLiveTracking, startSimulation, stopTracking)
+   * to invalidate and cancel in-flight asynchronous operations (Erlang make_ref() pattern).
+   */
+  private sessionToken: number = 0;
+
   private fixSubscribers = new Set<(fix: GPSFix) => void>();
   private statusSubscribers = new Set<(status: GPSStatus) => void>();
 
@@ -58,39 +65,52 @@ export class GPSService {
     };
   }
 
-  public async requestPermissions(): Promise<boolean> {
+  public async requestPermissions(session?: number): Promise<boolean> {
+    if (session !== undefined && this.sessionToken !== session) {
+      return false;
+    }
+
     this.setStatus('requesting_permission');
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
+      if (session !== undefined && this.sessionToken !== session) {
+        return false;
+      }
       if (status !== 'granted') {
         this.setStatus('permission_denied');
         return false;
       }
       return true;
     } catch {
-      this.setStatus('error');
+      if (session === undefined || this.sessionToken === session) {
+        this.setStatus('error');
+      }
       return false;
     }
   }
 
   public async startLiveTracking(): Promise<void> {
     this.stopTracking();
+    const currentSession = ++this.sessionToken;
 
-    const hasPermission = await this.requestPermissions();
-    if (!hasPermission) {
+    const hasPermission = await this.requestPermissions(currentSession);
+    if (this.sessionToken !== currentSession || !hasPermission) {
       return;
     }
 
     this.setStatus('searching');
 
     try {
-      this.locationSubscription = await Location.watchPositionAsync(
+      const subscription = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.BestForNavigation,
           timeInterval: 1000,
           distanceInterval: 1, // update every 1 meter
         },
         (location) => {
+          if (this.sessionToken !== currentSession) {
+            return;
+          }
           this.handleRawLocationUpdate({
             coords: {
               latitude: location.coords.latitude,
@@ -105,22 +125,40 @@ export class GPSService {
           });
         }
       );
+
+      // Guard: Did stopTracking(), startSimulation(), or a new startLiveTracking() occur
+      // while watchPositionAsync was awaiting resolution?
+      if (this.sessionToken !== currentSession) {
+        subscription.remove();
+        return;
+      }
+
+      this.locationSubscription = subscription;
     } catch {
-      this.setStatus('error');
+      if (this.sessionToken === currentSession) {
+        this.setStatus('error');
+      }
     }
   }
 
   public startSimulation(intervalMs: number = 1000): void {
     this.stopTracking();
+    const currentSession = ++this.sessionToken;
     this.setStatus('simulating');
 
     this.simulator.start((simFix) => {
+      if (this.sessionToken !== currentSession) {
+        return;
+      }
       this.currentFix = simFix;
       this.notifyFix(simFix);
     }, intervalMs);
   }
 
   public stopTracking(): void {
+    // Invalidate any in-flight asynchronous operations (permission or subscription creation)
+    this.sessionToken++;
+
     if (this.locationSubscription) {
       this.locationSubscription.remove();
       this.locationSubscription = null;
@@ -130,6 +168,8 @@ export class GPSService {
       this.simulator.stop();
     }
 
+    // Reset GPS fix state to avoid cross-session data contamination in filters
+    this.currentFix = null;
     this.setStatus('idle');
   }
 
