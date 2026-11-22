@@ -22,7 +22,9 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
       ]
     },
     "web": {
@@ -36,7 +38,8 @@
     "owner": "npthien-me",
     "plugins": [
       "expo-sqlite",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-notifications"
     ]
   }
 }

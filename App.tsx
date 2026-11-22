@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { gpsService } from './src/services/gps/GPSService';
 import { mapMatcher } from './src/services/osm/MapMatcher';
 import { overspeedFSM } from './src/services/rules/OverspeedFSM';
 import { determineSpeedLimit } from './src/services/rules/VietnamSpeedRules';
+import { notificationService } from './src/services/notifications/NotificationService';
 import { GPSFix, GPSStatus } from './src/types/gps';
 import { RoadMatchResult } from './src/types/osm';
 import { OverspeedState, SpeedLimitResult } from './src/types/rules';
@@ -23,9 +24,13 @@ export default function App() {
   const [overspeed, setOverspeed] = useState<OverspeedState>(overspeedFSM.getState());
 
   useEffect(() => {
-    // Warm up the offline SQLite OSM database
+    // Warm up offline SQLite OSM database and notifications
     mapMatcher.initialize().catch((err) => {
       console.warn('Failed to pre-warm OSM database:', err);
+    });
+
+    notificationService.initialize().then(() => {
+      notificationService.requestPermissions().catch(() => {});
     });
 
     // Subscribe to GPS telemetry fixes
@@ -51,6 +56,17 @@ export default function App() {
           newFix.timestamp
         );
         setOverspeed(alertState);
+
+        // 4. Trigger local notification & haptic alerts (mirrored to Xiaomi Band via ANCS)
+        const roadName = matchResult.matched && matchResult.segment
+          ? matchResult.segment.name
+          : 'Đoạn đường hiện tại';
+
+        notificationService.handleOverspeedUpdate(
+          alertState,
+          roadName,
+          newFix.timestamp
+        ).catch(() => {});
       } catch (err) {
         console.warn('Map matching or speed rule error:', err);
       }
@@ -82,6 +98,10 @@ export default function App() {
     setRoadMatch(null);
     setSpeedLimit(null);
     setOverspeed(overspeedFSM.getState());
+  };
+
+  const handleTestAlert = () => {
+    notificationService.triggerTestAlert();
   };
 
   return (
@@ -119,6 +139,14 @@ export default function App() {
           onStartSimulation={handleStartSimulation}
           onStop={handleStop}
         />
+
+        <TouchableOpacity
+          style={styles.testAlertBtn}
+          onPress={handleTestAlert}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.testAlertBtnText}>🔔 TEST BAND VIBRATION (ANCS)</Text>
+        </TouchableOpacity>
 
         <TelemetryInfo fix={fix} />
 
@@ -175,6 +203,22 @@ const styles = StyleSheet.create({
   cardContainer: {
     width: '100%',
     paddingHorizontal: 20,
+  },
+  testAlertBtn: {
+    backgroundColor: '#21262D',
+    borderWidth: 1,
+    borderColor: '#30363D',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginVertical: 4,
+  },
+  testAlertBtnText: {
+    color: '#58A6FF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
   footer: {
     paddingHorizontal: 24,
