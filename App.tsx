@@ -22,6 +22,7 @@ export default function App() {
   const [roadMatch, setRoadMatch] = useState<RoadMatchResult | null>(null);
   const [speedLimit, setSpeedLimit] = useState<SpeedLimitResult | null>(null);
   const [overspeed, setOverspeed] = useState<OverspeedState>(overspeedFSM.getState());
+  const [isBackgroundEnabled, setIsBackgroundEnabled] = useState<boolean>(true);
 
   useEffect(() => {
     // Warm up offline SQLite OSM database and notifications
@@ -85,8 +86,11 @@ export default function App() {
     };
   }, []);
 
-  const handleStartLive = () => {
-    gpsService.startLiveTracking();
+  const handleStartLive = async () => {
+    await gpsService.startLiveTracking();
+    if (isBackgroundEnabled) {
+      await gpsService.startBackgroundTracking();
+    }
   };
 
   const handleStartSimulation = () => {
@@ -100,6 +104,18 @@ export default function App() {
     setRoadMatch(null);
     setSpeedLimit(null);
     setOverspeed(overspeedFSM.getState());
+  };
+
+  const handleToggleBackground = async () => {
+    const nextState = !isBackgroundEnabled;
+    setIsBackgroundEnabled(nextState);
+    if (status === 'locked' || status === 'searching') {
+      if (nextState) {
+        await gpsService.startBackgroundTracking();
+      } else {
+        await gpsService.stopBackgroundTracking();
+      }
+    }
   };
 
   const handleTestAlert = () => {
@@ -142,13 +158,28 @@ export default function App() {
           onStop={handleStop}
         />
 
-        <TouchableOpacity
-          style={styles.testAlertBtn}
-          onPress={handleTestAlert}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.testAlertBtnText}>🔔 TEST BAND VIBRATION (ANCS)</Text>
-        </TouchableOpacity>
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[
+              styles.modePill,
+              isBackgroundEnabled ? styles.modePillActive : styles.modePillInactive,
+            ]}
+            onPress={handleToggleBackground}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.modePillText, isBackgroundEnabled && styles.modePillTextActive]}>
+              {isBackgroundEnabled ? '🛡️ BACKGROUND: ON' : '⚪ BACKGROUND: OFF'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.testAlertBtn}
+            onPress={handleTestAlert}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.testAlertBtnText}>🔔 TEST BAND</Text>
+          </TouchableOpacity>
+        </View>
 
         <TelemetryInfo fix={fix} />
 
@@ -206,21 +237,55 @@ const styles = StyleSheet.create({
     width: '100%',
     paddingHorizontal: 20,
   },
+  actionRow: {
+    flexDirection: 'row',
+    width: '100%',
+    paddingHorizontal: 20,
+    gap: 10,
+    marginVertical: 4,
+  },
+  modePill: {
+    flex: 1.2,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  modePillActive: {
+    backgroundColor: '#0F2D1A',
+    borderColor: '#238636',
+  },
+  modePillInactive: {
+    backgroundColor: '#21262D',
+    borderColor: '#30363D',
+  },
+  modePillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#8B949E',
+    letterSpacing: 0.5,
+  },
+  modePillTextActive: {
+    color: '#3FB950',
+  },
   testAlertBtn: {
+    flex: 0.8,
     backgroundColor: '#21262D',
     borderWidth: 1,
     borderColor: '#30363D',
     paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     borderRadius: 6,
     alignItems: 'center',
-    marginVertical: 4,
+    justifyContent: 'center',
   },
   testAlertBtnText: {
     color: '#58A6FF',
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   footer: {
     paddingHorizontal: 24,

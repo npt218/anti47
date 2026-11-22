@@ -9,7 +9,12 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "This app needs your location to track your motorcycle speed and warn you of speed limits."
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "NSLocationWhenInUseUsageDescription": "This app needs your location to track your motorcycle speed and warn you of speed limits.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app monitors your motorcycle speed in the background to alert you when exceeding speed limits while your phone is locked or screen is off.",
+        "NSLocationAlwaysUsageDescription": "This app monitors your motorcycle speed in the background to alert you when exceeding speed limits while your phone is locked or screen is off."
       }
     },
     "android": {
@@ -23,6 +28,9 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
         "VIBRATE"
       ]
@@ -39,7 +47,15 @@
     "plugins": [
       "expo-sqlite",
       "expo-status-bar",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "This app monitors your motorcycle speed in the background to alert you when exceeding speed limits while your phone is locked or screen is off.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
     ]
   }
 }

@@ -26,7 +26,10 @@ describe('GPSService Concurrency & Session Token Protection', () => {
 
     mockLocation = {
       requestForegroundPermissionsAsync: jest.fn(),
+      requestBackgroundPermissionsAsync: jest.fn().mockImplementation(() => Promise.resolve({ status: 'granted' })),
       watchPositionAsync: jest.fn(),
+      hasStartedLocationUpdatesAsync: jest.fn().mockImplementation(() => Promise.resolve(false)),
+      stopLocationUpdatesAsync: jest.fn().mockImplementation(() => Promise.resolve()),
       Accuracy: { BestForNavigation: 6 },
     };
 

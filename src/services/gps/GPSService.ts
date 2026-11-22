@@ -8,6 +8,7 @@
 
 import * as Location from 'expo-location';
 import {
+  BACKGROUND_LOCATION_TASK,
   DEFAULT_GPS_FILTER_CONFIG,
   GPSFilterConfig,
   GPSFix,
@@ -168,9 +169,107 @@ export class GPSService {
       this.simulator.stop();
     }
 
+    // Stop background location task if active
+    this.stopBackgroundTracking().catch(() => {});
+
     // Reset GPS fix state to avoid cross-session data contamination in filters
     this.currentFix = null;
     this.setStatus('idle');
+  }
+
+  /**
+   * Processes an incoming background GNSS fix dispatched by `expo-task-manager`
+   * while the app is minimized or screen is locked.
+   */
+  public handleBackgroundLocationFix(raw: RawLocationData): GPSFix | null {
+    const processed = processRawLocation(raw, this.currentFix, this.filterConfig);
+    if (processed) {
+      this.currentFix = processed;
+      if (this.status !== 'locked') {
+        this.setStatus('locked');
+      }
+      this.notifyFix(processed);
+    }
+    return processed;
+  }
+
+  /**
+   * Requests background location permission ("Always Allow").
+   */
+  public async requestBackgroundPermissions(): Promise<boolean> {
+    const foregroundGranted = await this.requestPermissions();
+    if (!foregroundGranted) return false;
+
+    try {
+      const { status } = await Location.requestBackgroundPermissionsAsync();
+      return status === 'granted';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Starts native background location updates with automotive navigation profile.
+   */
+  public async startBackgroundTracking(): Promise<boolean> {
+    const hasPermission = await this.requestBackgroundPermissions();
+    if (!hasPermission) {
+      console.warn('Background location permission not granted');
+      return false;
+    }
+
+    try {
+      const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      if (!hasStarted) {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 1000,
+          distanceInterval: 2, // update every 2 meters
+          showsBackgroundLocationIndicator: true, // iOS requirement: blue pill indicator
+          pausesUpdatesAutomatically: false, // Critical: do not pause at traffic lights
+          activityType: Location.ActivityType.AutomotiveNavigation,
+          foregroundService: {
+            notificationTitle: 'MOTO ALERT đang chạy',
+            notificationBody: 'Giám sát tốc độ xe máy trong nền (màn hình khóa)',
+            notificationColor: '#1F6FEB',
+          },
+        });
+      }
+      return true;
+    } catch (err) {
+      console.warn('Failed to start background location updates:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Stops background location task.
+   */
+  public async stopBackgroundTracking(): Promise<void> {
+    try {
+      if (typeof Location.hasStartedLocationUpdatesAsync === 'function') {
+        const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+        if (hasStarted && typeof Location.stopLocationUpdatesAsync === 'function') {
+          await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to stop background location updates:', err);
+    }
+  }
+
+  /**
+   * Checks whether background tracking task is actively running.
+   */
+  public async isBackgroundTrackingActive(): Promise<boolean> {
+    try {
+      if (typeof Location.hasStartedLocationUpdatesAsync === 'function') {
+        return await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   private handleRawLocationUpdate(raw: RawLocationData): void {

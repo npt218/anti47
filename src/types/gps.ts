@@ -56,3 +56,5 @@ export const DEFAULT_GPS_FILTER_CONFIG: GPSFilterConfig = {
   smoothingAlpha: 0.45,
   maxPlausibleSpeedKmh: 160,
 };
+
+export const BACKGROUND_LOCATION_TASK = 'MOTO_ALERT_BACKGROUND_LOCATION';

@@ -1,5 +1,8 @@
 import { registerRootComponent } from 'expo';
 
+// Register headless background task before root component mount
+import './src/services/gps/BackgroundTask';
+
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);
