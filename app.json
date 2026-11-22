@@ -35,7 +35,8 @@
     },
     "owner": "npthien-me",
     "plugins": [
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-status-bar"
     ]
   }
 }

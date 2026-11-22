@@ -1,16 +1,26 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { AlertLevel } from '../../types/rules';
 
 interface SpeedGaugeProps {
   speedKmh: number;
+  alertLevel?: AlertLevel;
 }
 
-export const SpeedGauge: React.FC<SpeedGaugeProps> = ({ speedKmh }) => {
-  // Speed color indicator (green/amber/red levels)
+export const SpeedGauge: React.FC<SpeedGaugeProps> = ({ speedKmh, alertLevel = 'normal' }) => {
+  // Speed color indicator matches the legal overspeed state
   const getSpeedColor = () => {
-    if (speedKmh > 70) return '#FF4D4F'; // High speed
-    if (speedKmh > 50) return '#FAAD14'; // Moderate / caution
-    return '#52C41A'; // Safe / normal
+    switch (alertLevel) {
+      case 'critical':
+        return '#FF1744';
+      case 'warning':
+        return '#FF4D4F';
+      case 'caution':
+        return '#FAAD14';
+      case 'normal':
+      default:
+        return '#52C41A';
+    }
   };
 
   return (
