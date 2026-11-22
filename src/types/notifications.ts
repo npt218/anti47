@@ -22,18 +22,24 @@ export interface NotificationSettings {
   enableNotifications: boolean;
   /** Master toggle for phone haptic vibration */
   enableHaptics: boolean;
+  /** Continuous pulsing vibration loop on phone while exceeding speed limit */
+  enableContinuousVibration: boolean;
   /** Sound alert toggle */
   enableSound: boolean;
-  /** Minimum milliseconds between repeated warning notifications (default: 15,000 ms) */
+  /** Cadence in ms between repeated notifications sent to Xiaomi Band while in warning (default: 4000 ms) */
   warningCooldownMs: number;
-  /** Minimum milliseconds between repeated critical notifications (default: 8,000 ms) */
+  /** Cadence in ms between repeated notifications sent to Xiaomi Band while in critical (default: 3000 ms) */
   criticalCooldownMs: number;
+  /** Automatically dismiss/clear lock-screen notifications when speed recovers below limit */
+  autoDismissOnRecovery: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   enableNotifications: true,
   enableHaptics: true,
+  enableContinuousVibration: true,
   enableSound: true,
-  warningCooldownMs: 15000,
-  criticalCooldownMs: 8000,
+  warningCooldownMs: 4000,
+  criticalCooldownMs: 3000,
+  autoDismissOnRecovery: true,
 };

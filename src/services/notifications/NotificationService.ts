@@ -1,13 +1,14 @@
 /**
  * Alert & Notification Service
  *
- * Coordinates local notifications, vibration patterns, and wearable mirroring
+ * Coordinates local notifications, continuous vibration patterns, and wearable mirroring
  * to Xiaomi Smart Band 11 via iOS Apple Notification Center Service (ANCS).
  *
- * Implements alarm throttling/cooldowns to prevent notification spam.
+ * Implements continuous phone vibration while overspeeding, rapid wearable notification
+ * cadence, and automatic dismissal upon speed recovery.
  */
 
-import { Vibration } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 import { AlertLevel, OverspeedState } from '../../types/rules';
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -42,12 +43,12 @@ export function shouldTriggerAlert(
     return true;
   }
 
-  // Cooldown repeat for sustained critical
+  // Cooldown repeat for sustained critical (rapid repeat for Xiaomi Band wrist alert)
   if (currentLevel === 'critical') {
     return elapsed >= settings.criticalCooldownMs;
   }
 
-  // Cooldown repeat for sustained warning
+  // Cooldown repeat for sustained warning (rapid repeat for Xiaomi Band wrist alert)
   if (currentLevel === 'warning') {
     return elapsed >= settings.warningCooldownMs;
   }
@@ -86,6 +87,9 @@ export class NotificationService {
   private lastAlertTimestamp: number = 0;
   private previousLevel: AlertLevel = 'normal';
   private isConfigured: boolean = false;
+
+  private continuousVibrationTimer: ReturnType<typeof setInterval> | null = null;
+  private isVibratingContinuously: boolean = false;
 
   constructor(settings: NotificationSettings = DEFAULT_NOTIFICATION_SETTINGS) {
     this.settings = settings;
@@ -143,14 +147,94 @@ export class NotificationService {
   }
 
   /**
-   * Evaluates incoming overspeed state and fires notification + vibration
-   * if threshold and cooldown conditions are satisfied.
+   * Starts a continuous pulsing vibration pattern that loops indefinitely
+   * until explicitly stopped when speed drops below the limit.
+   */
+  public startContinuousVibration(level: AlertLevel): void {
+    if (this.isVibratingContinuously) return;
+    this.isVibratingContinuously = true;
+
+    // Initial immediate pulse
+    this.triggerHaptics(level);
+
+    if (Platform.OS === 'android') {
+      // Android supports native repeating pattern with repeat = true
+      const pattern = level === 'critical' ? [0, 500, 200, 500] : [0, 450, 350];
+      Vibration.vibrate(pattern, true);
+    } else {
+      if (this.continuousVibrationTimer) {
+        clearInterval(this.continuousVibrationTimer);
+      }
+      // iOS ignores repeat: true; an interval loop provides continuous pulsing
+      const intervalMs = level === 'critical' ? 650 : 850;
+      this.continuousVibrationTimer = setInterval(() => {
+        if (!this.isVibratingContinuously) return;
+        Vibration.vibrate([0, 400]);
+      }, intervalMs);
+    }
+  }
+
+  /**
+   * Immediately stops continuous vibration loop and cancels active motor vibrations.
+   */
+  public stopContinuousVibration(): void {
+    this.isVibratingContinuously = false;
+
+    if (this.continuousVibrationTimer) {
+      clearInterval(this.continuousVibrationTimer);
+      this.continuousVibrationTimer = null;
+    }
+
+    try {
+      Vibration.cancel();
+    } catch {
+      // Ignored if unsupported
+    }
+  }
+
+  /**
+   * Dismisses all delivered notifications from the system notification tray/lock screen.
+   */
+  public async dismissDeliveredNotifications(): Promise<void> {
+    try {
+      const Notifications = await import('expo-notifications');
+      await Notifications.dismissAllNotificationsAsync();
+    } catch (err) {
+      console.warn('Failed to dismiss notifications:', err);
+    }
+  }
+
+  /**
+   * Evaluates incoming overspeed state:
+   * - Starts continuous phone vibration while exceeding limit.
+   * - Stops continuous vibration immediately when under limit.
+   * - Auto-dismisses old notifications on recovery.
+   * - Fires repeated local notifications to pulse the Xiaomi Band.
    */
   public async handleOverspeedUpdate(
     overspeed: OverspeedState,
     roadName: string = 'Đường hiện tại',
     now: number = Date.now()
   ): Promise<boolean> {
+    const isOverspeedAlert = overspeed.level === 'warning' || overspeed.level === 'critical';
+
+    // 1. Manage continuous phone vibration loop
+    if (isOverspeedAlert) {
+      if (this.settings.enableContinuousVibration) {
+        this.startContinuousVibration(overspeed.level);
+      }
+    } else {
+      // Speed recovered or under limit: immediately stop phone vibration!
+      this.stopContinuousVibration();
+
+      // Automatically clear delivered notifications from lock screen
+      if (this.settings.autoDismissOnRecovery && this.previousLevel !== 'normal') {
+        await this.dismissDeliveredNotifications();
+      }
+
+      this.lastAlertTimestamp = 0;
+    }
+
     const shouldAlert = shouldTriggerAlert(
       overspeed.level,
       this.previousLevel,
@@ -158,11 +242,6 @@ export class NotificationService {
       this.lastAlertTimestamp,
       this.settings
     );
-
-    if (overspeed.level === 'normal') {
-      // Reset cooldown history upon recovery
-      this.lastAlertTimestamp = 0;
-    }
 
     this.previousLevel = overspeed.level;
 
@@ -173,8 +252,8 @@ export class NotificationService {
     this.lastAlertTimestamp = now;
     const payload = createNotificationPayload(overspeed, roadName, now);
 
-    // 1. Trigger haptic vibration pattern on phone
-    if (this.settings.enableHaptics) {
+    // Single pulse if continuous vibration disabled
+    if (this.settings.enableHaptics && !this.settings.enableContinuousVibration) {
       this.triggerHaptics(overspeed.level);
     }
 
@@ -184,6 +263,18 @@ export class NotificationService {
     }
 
     return true;
+  }
+
+  /**
+   * Stops all alerts, continuous vibration, and clears notifications.
+   */
+  public async stopAllAlerts(): Promise<void> {
+    this.stopContinuousVibration();
+    this.lastAlertTimestamp = 0;
+    this.previousLevel = 'normal';
+    if (this.settings.autoDismissOnRecovery) {
+      await this.dismissDeliveredNotifications();
+    }
   }
 
   public async triggerTestAlert(): Promise<void> {
@@ -198,7 +289,13 @@ export class NotificationService {
     };
 
     const payload = createNotificationPayload(testState, 'Cầu Sài Gòn (Thử nghiệm)');
-    this.triggerHaptics('warning');
+
+    // Start continuous vibration for 3 seconds to demonstrate continuous motor pulse
+    this.startContinuousVibration('warning');
+    setTimeout(() => {
+      this.stopContinuousVibration();
+    }, 3000);
+
     await this.dispatchLocalNotification(payload);
   }
 

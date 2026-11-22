@@ -81,6 +81,7 @@ export default function App() {
       unsubscribeFix();
       unsubscribeStatus();
       gpsService.stopTracking();
+      notificationService.stopAllAlerts();
     };
   }, []);
 
@@ -95,6 +96,7 @@ export default function App() {
   const handleStop = () => {
     gpsService.stopTracking();
     overspeedFSM.reset();
+    notificationService.stopAllAlerts();
     setRoadMatch(null);
     setSpeedLimit(null);
     setOverspeed(overspeedFSM.getState());

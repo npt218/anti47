@@ -2,18 +2,26 @@
  * Unit Tests for Alert & Notification Service
  */
 
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+
+const mockVibrate = jest.fn();
+const mockCancel = jest.fn();
+const mockDismissAll = jest.fn().mockImplementation(() => Promise.resolve());
+const mockSchedule = jest.fn().mockImplementation(() => Promise.resolve('test-id'));
 
 jest.mock('react-native', () => ({
+  Platform: { OS: 'ios' },
   Vibration: {
-    vibrate: jest.fn(),
+    vibrate: mockVibrate,
+    cancel: mockCancel,
   },
 }));
 
 jest.mock('expo-notifications', () => ({
   setNotificationHandler: jest.fn(),
   setNotificationChannelAsync: jest.fn().mockImplementation(() => Promise.resolve({})),
-  scheduleNotificationAsync: jest.fn().mockImplementation(() => Promise.resolve('test-id')),
+  scheduleNotificationAsync: mockSchedule,
+  dismissAllNotificationsAsync: mockDismissAll,
   getPermissionsAsync: jest.fn().mockImplementation(() => Promise.resolve({ status: 'granted' })),
   requestPermissionsAsync: jest.fn().mockImplementation(() => Promise.resolve({ status: 'granted' })),
   AndroidImportance: { MAX: 5 },
@@ -29,6 +37,10 @@ import { OverspeedState } from '../src/types/rules';
 import { DEFAULT_NOTIFICATION_SETTINGS } from '../src/types/notifications';
 
 describe('NotificationService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   describe('shouldTriggerAlert', () => {
     it('returns false for normal and caution levels', () => {
       expect(shouldTriggerAlert('normal', 'normal', 10000, 0)).toBe(false);
@@ -50,24 +62,24 @@ describe('NotificationService', () => {
       expect(trigger).toBe(true);
     });
 
-    it('suppresses repeated warnings within warning cooldown (15 seconds)', () => {
+    it('enforces warning repeat cadence (4 seconds for Xiaomi Band awareness)', () => {
       // Last alert was at t = 10,000ms
-      // At t = 18,000ms (8s elapsed < 15s cooldown) -> should be suppressed
-      const triggerSuppressed = shouldTriggerAlert('warning', 'warning', 18000, 10000);
+      // At t = 12,000ms (2s elapsed < 4s cadence) -> should be suppressed
+      const triggerSuppressed = shouldTriggerAlert('warning', 'warning', 12000, 10000);
       expect(triggerSuppressed).toBe(false);
 
-      // At t = 25,000ms (15s elapsed >= 15s cooldown) -> should trigger repeat
-      const triggerAllowed = shouldTriggerAlert('warning', 'warning', 25000, 10000);
+      // At t = 14,000ms (4s elapsed >= 4s cadence) -> should trigger repeat
+      const triggerAllowed = shouldTriggerAlert('warning', 'warning', 14000, 10000);
       expect(triggerAllowed).toBe(true);
     });
 
-    it('enforces critical cooldown (8 seconds)', () => {
+    it('enforces critical repeat cadence (3 seconds)', () => {
       // Last critical alert at t = 10,000ms
-      // At t = 15,000ms (5s < 8s) -> suppressed
-      expect(shouldTriggerAlert('critical', 'critical', 15000, 10000)).toBe(false);
+      // At t = 12,000ms (2s < 3s) -> suppressed
+      expect(shouldTriggerAlert('critical', 'critical', 12000, 10000)).toBe(false);
 
-      // At t = 18,000ms (8s >= 8s) -> allowed
-      expect(shouldTriggerAlert('critical', 'critical', 18000, 10000)).toBe(true);
+      // At t = 13,000ms (3s >= 3s) -> allowed
+      expect(shouldTriggerAlert('critical', 'critical', 13000, 10000)).toBe(true);
     });
   });
 
@@ -108,17 +120,22 @@ describe('NotificationService', () => {
     });
   });
 
-  describe('NotificationService lifecycle', () => {
+  describe('Continuous Vibration & Notification Lifecycle', () => {
     let service: NotificationService;
 
     beforeEach(() => {
       service = new NotificationService({
         ...DEFAULT_NOTIFICATION_SETTINGS,
-        warningCooldownMs: 15000,
+        warningCooldownMs: 4000,
+        criticalCooldownMs: 3000,
       });
     });
 
-    it('handles overspeed progression and cooldowns correctly', async () => {
+    afterEach(() => {
+      service.stopContinuousVibration();
+    });
+
+    it('starts continuous vibration when entering warning and stops on recovery', async () => {
       const warningState: OverspeedState = {
         level: 'warning',
         currentSpeedKmh: 65,
@@ -129,19 +146,11 @@ describe('NotificationService', () => {
         reason: 'Test',
       };
 
-      // 1. Initial trigger at t = 10,000ms -> should alert
-      const alerted1 = await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 10000);
-      expect(alerted1).toBe(true);
+      // 1. Enter warning -> starts continuous vibration
+      await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 10000);
+      expect(mockVibrate).toHaveBeenCalled();
 
-      // 2. Immediate next fix at t = 11,000ms -> should be throttled
-      const alerted2 = await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 11000);
-      expect(alerted2).toBe(false);
-
-      // 3. Fix after cooldown (t = 26,000ms, 16s later) -> should alert
-      const alerted3 = await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 26000);
-      expect(alerted3).toBe(true);
-
-      // 4. Rider slows down to normal -> resets cooldown
+      // 2. Rider slows down below limit -> normal
       const normalState: OverspeedState = {
         level: 'normal',
         currentSpeedKmh: 55,
@@ -151,11 +160,46 @@ describe('NotificationService', () => {
         overspeedDurationMs: 0,
         reason: 'Test',
       };
-      await service.handleOverspeedUpdate(normalState, 'Cầu Sài Gòn', 28000);
 
-      // 5. Fresh warning shortly after (t = 30,000ms) -> triggers immediately because history was reset!
-      const alerted4 = await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 30000);
-      expect(alerted4).toBe(true);
+      await service.handleOverspeedUpdate(normalState, 'Cầu Sài Gòn', 15000);
+
+      // Continuous vibration should be canceled immediately!
+      expect(mockCancel).toHaveBeenCalled();
+
+      // Delivered notifications should be cleared from lock screen
+      expect(mockDismissAll).toHaveBeenCalled();
+    });
+
+    it('handles repeated overspeed notifications at rapid 4s cadence for Xiaomi Band', async () => {
+      const warningState: OverspeedState = {
+        level: 'warning',
+        currentSpeedKmh: 65,
+        speedLimitKmh: 60,
+        deltaKmh: 5,
+        isOverspeed: true,
+        overspeedDurationMs: 2000,
+        reason: 'Test',
+      };
+
+      // 1. Initial alert at t = 10,000ms
+      const alerted1 = await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 10000);
+      expect(alerted1).toBe(true);
+
+      // 2. 2 seconds later (t = 12,000ms) -> throttled (< 4s)
+      const alerted2 = await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 12000);
+      expect(alerted2).toBe(false);
+
+      // 3. 4 seconds later (t = 14,000ms) -> fires repeat notification to buzz band
+      const alerted3 = await service.handleOverspeedUpdate(warningState, 'Cầu Sài Gòn', 14000);
+      expect(alerted3).toBe(true);
+    });
+
+    it('stopAllAlerts cancels vibration and clears notifications', async () => {
+      service.startContinuousVibration('warning');
+      await service.stopAllAlerts();
+
+      expect(mockCancel).toHaveBeenCalled();
+      expect(mockDismissAll).toHaveBeenCalled();
     });
   });
 });
